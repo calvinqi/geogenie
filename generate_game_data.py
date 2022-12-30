@@ -1,23 +1,33 @@
+import csv
 import requests
+import pdb
 import time
 from typing import Tuple
 import argparse
+import map_utils
 
 MAP = 'european-union'
 DEFAULT_TOKENS_FILE = 'game_tokens.txt'
+DATASET_FILE = 'data.csv'
 
 USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'
-LOCATION_KEYS = ['lat', 'long', 'streakLocationCode']
+LOCATION_KEYS = ['lat', 'lng', 'heading', 'pitch', 'streakLocationCode']
+DATA_KEYS = LOCATION_KEYS + ['token', 'round', 'image_url']
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--mode', choices=['tokens', 'data'], default='data')
+    parser.add_argument(
+        '--mode',
+        choices=['tokens', 'data'],
+        help='First generate a list of game tokens using `tokens` mode'
+        'Then, using these games, `data` mode fetches images and coordinates to generate the complete dataset',
+        default='data')
     parser.add_argument('--game_tokens_file',
                         help='If not provided, will issue API rquests to generate game tokens from scratch',
                         type=str,
                         default=DEFAULT_TOKENS_FILE)
-    parser.add_argument('--num_tokens_to_generate', type=int, default=2)
+    parser.add_argument('--num_tokens_to_generate', type=int, default=10)
     args = parser.parse_args()
     return args
 
@@ -64,8 +74,8 @@ def request_start_game() -> any:
     return response
 
 
-def request_guess(game_token: str, lat: float = 51.1, long: float = 3.3) -> any:
-    json_data = {'token': game_token, 'lat': lat, 'long': long}
+def request_guess(game_token: str, lat: float = 51.1, lng: float = 3.3) -> any:
+    json_data = {'token': game_token, 'lat': lat, 'lng': lng}
     headers = get_headers(referer=f'https://www.geoguessr.com/game/{game_token}')
     response = requests.post(f'https://www.geoguessr.com/api/v3/games/{game_token}',
                              cookies=cookies,
@@ -107,8 +117,22 @@ def get_rounds_for_game(game_token: str) -> dict:
         time.sleep(0.1)
         rounds = request_next_round(game_token).json()['rounds']
         time.sleep(0.1)
-    print(rounds)
     return rounds
+
+
+def generate_data_for_games(args):
+    tokens_file = args.game_tokens_file
+    with open(DATASET_FILE, 'w', newline='') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(DATA_KEYS)
+        with open(tokens_file) as f:
+            for game_token in f:
+                game_token = game_token.strip()
+                rounds = get_rounds_for_game(game_token)
+                for round_idx, round_location in enumerate(rounds):
+                    location_vals = [round_location[key] for key in LOCATION_KEYS]
+                    row = location_vals + [game_token, round_idx, 'placeholderurl.com']
+                    writer.writerow(row)
 
 
 def main():
@@ -116,7 +140,9 @@ def main():
     if args.mode == 'tokens':
         generate_game_tokens(args)
         return
-    get_rounds_for_game('dWnNLb05UeXg0Syt')
+    elif args.mode == 'data':
+        generate_data_for_games(args)
+        return
 
 
 if __name__ == '__main__':
