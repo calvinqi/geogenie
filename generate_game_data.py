@@ -3,16 +3,16 @@ import requests
 import pdb
 import time
 from typing import Tuple
+from google.cloud import storage
 import argparse
 import map_utils
+import constants as c
+import os
 
 MAP = 'european-union'
 DEFAULT_TOKENS_FILE = 'game_tokens.txt'
-DATASET_FILE = 'data.csv'
-
+DATASET_FILE = 'dataset.csv'
 USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'
-LOCATION_KEYS = ['lat', 'lng', 'heading', 'pitch', 'streakLocationCode']
-DATA_KEYS = LOCATION_KEYS + ['token', 'round', 'image_url']
 
 
 def parse_args():
@@ -23,11 +23,21 @@ def parse_args():
         help='First generate a list of game tokens using `tokens` mode'
         'Then, using these games, `data` mode fetches images and coordinates to generate the complete dataset',
         default='data')
+    ### Game token generation ###
     parser.add_argument('--game_tokens_file',
                         help='If not provided, will issue API rquests to generate game tokens from scratch',
                         type=str,
                         default=DEFAULT_TOKENS_FILE)
     parser.add_argument('--num_tokens_to_generate', type=int, default=10)
+
+    ### Google Cloud args ###
+    parser.add_argument('--project', help='GCP project', type=str, default='geogenius-project')
+    parser.add_argument('--bucket', help='GCP bucket', type=str, default='geogenius-data')
+    parser.add_argument('--image_data_prefix', help='For versioning the image data', type=str, default='v1_europe')
+    parser.add_argument('--maps_key', help='API key', type=str, default='')
+
+    ### Data generation ###
+
     args = parser.parse_args()
     return args
 
@@ -121,17 +131,30 @@ def get_rounds_for_game(game_token: str) -> dict:
 
 
 def generate_data_for_games(args):
+    client = storage.Client(args.project)
+    bucket = client.bucket(args.bucket)
+
     tokens_file = args.game_tokens_file
     with open(DATASET_FILE, 'w', newline='') as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow(DATA_KEYS)
+        writer.writerow(c.DATA_KEYS)
         with open(tokens_file) as f:
             for game_token in f:
                 game_token = game_token.strip()
                 rounds = get_rounds_for_game(game_token)
                 for round_idx, round_location in enumerate(rounds):
-                    location_vals = [round_location[key] for key in LOCATION_KEYS]
-                    row = location_vals + [game_token, round_idx, 'placeholderurl.com']
+                    location_vals = [round_location[key] for key in c.LOCATION_KEYS]
+                    filename = f'{game_token}_{round_idx}.jpeg'
+                    blob_filename = os.path.join(args.image_data_prefix, filename)
+                    blob = bucket.blob(blob_filename)
+                    if blob.exists():
+                        print(f'Found image data {blob_filename} already existing, not re-fetching')
+                    else:
+                        img_data = map_utils.get_maps_img(args, round_location)
+                        blob.upload_from_string(img_data)
+
+                    # url = os.path.join('gs://', args.bucket, blob_filename)
+                    row = location_vals + [game_token, round_idx, blob_filename]
                     writer.writerow(row)
 
 
