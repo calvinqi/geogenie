@@ -124,9 +124,9 @@ def get_rounds_for_game(game_token: str) -> dict:
         if len(rounds) >= 5:
             break
         request_guess(game_token)
-        time.sleep(0.1)
+        time.sleep(0.2)
         rounds = request_next_round(game_token).json()['rounds']
-        time.sleep(0.1)
+        time.sleep(0.2)
     return rounds
 
 
@@ -139,19 +139,23 @@ def generate_data_for_games(args):
         writer = csv.writer(csvfile)
         writer.writerow(c.DATA_KEYS)
         with open(tokens_file) as f:
-            for game_token in f:
+            for game_idx, game_token in enumerate(f):
                 game_token = game_token.strip()
+                blobs_with_prefix = list(
+                    client.list_blobs(bucket, prefix=os.path.join(args.image_data_prefix, game_token)))
+                if len(blobs_with_prefix) > 0:
+                    print(f'Found game token {game_token} already existing, not re-fetching')
+                    continue
+                print(f'Fetching round info game {game_idx}, {game_token}')
+
                 rounds = get_rounds_for_game(game_token)
                 for round_idx, round_location in enumerate(rounds):
                     location_vals = [round_location[key] for key in c.LOCATION_KEYS]
                     filename = f'{game_token}_{round_idx}.jpeg'
                     blob_filename = os.path.join(args.image_data_prefix, filename)
                     blob = bucket.blob(blob_filename)
-                    if blob.exists():
-                        print(f'Found image data {blob_filename} already existing, not re-fetching')
-                    else:
-                        img_data = map_utils.get_maps_img(args, round_location)
-                        blob.upload_from_string(img_data)
+                    img_data = map_utils.get_maps_img(args, round_location)
+                    blob.upload_from_string(img_data)
 
                     # url = os.path.join('gs://', args.bucket, blob_filename)
                     row = location_vals + [game_token, round_idx, blob_filename]
